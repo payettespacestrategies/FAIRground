@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FAIRground — FAIR Cost Recovery Comparator</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/prop-types@15/prop-types.min.js"></script>
+<script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Public+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+  html, body { margin: 0; background-color: #faf7f2; }
+  body { font-family: 'Public Sans', sans-serif; }
+  .font-display { font-family: 'Fraunces', serif; font-optical-sizing: auto; }
+  .font-mono { font-family: 'JetBrains Mono', monospace; }
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  input[type="number"] { -moz-appearance: textfield; }
+  .input-line {
+    background: transparent; border: none; border-bottom: 1px solid #d4ccbf;
+    padding: 4px 0; font-family: 'JetBrains Mono', monospace; font-size: 0.95rem;
+    color: #1a1a1a; width: 100%; outline: none;
+  }
+  .input-line:focus { border-bottom-color: #a85432; }
+  .scenario-card {
+    background: #fefcf8; border: 1px solid #e8e0d1; padding: 16px;
+    transition: transform 0.15s ease, border-color 0.15s ease;
+  }
+  .scenario-card:hover { border-color: #a85432; }
+  .scenario-card.highlight { border-color: #a85432; border-width: 2px; }
+  #loading { padding: 4rem; text-align: center; color: #8a7651; font-family: 'Public Sans', sans-serif; }
+</style>
+</head>
+<body>
+<div id="root"><div id="loading">Loading FAIRground…</div></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useMemo } = React;
+const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend } = Recharts;
+
+const defaultTypologies = [
+  { id: 'comp', name: 'Computational / Office', shortName: 'Computational', constructionMult: 1.0, operatingMult: 1.0, group: 'dry' },
+  { id: 'dry', name: 'Dry Lab / Robotics', shortName: 'Dry / Robotics', constructionMult: 1.3, operatingMult: 1.6, group: 'dry' },
+  { id: 'optL', name: 'Optics — Low Intensity (VC-B/C)', shortName: 'Optics Low', constructionMult: 1.6, operatingMult: 2.1, group: 'dry' },
+  { id: 'optH', name: 'Optics — High Intensity (VC-E)', shortName: 'Optics High', constructionMult: 2.7, operatingMult: 3.7, group: 'dry' },
+  { id: 'bio', name: 'Biology / General Wet Lab', shortName: 'Biology Wet', constructionMult: 2.0, operatingMult: 2.9, group: 'wet' },
+  { id: 'chem', name: 'Chemistry / Synthesis Wet Lab', shortName: 'Chemistry', constructionMult: 2.4, operatingMult: 4.7, group: 'wet' },
+  { id: 'clin', name: 'Clinical / Participant Lab', shortName: 'Clinical', constructionMult: 1.5, operatingMult: 2.0, group: 'clinical' },
+  { id: 'clean', name: 'Cleanroom (ISO 5–7)', shortName: 'Cleanroom', constructionMult: 4.1, operatingMult: 10.0, group: 'wet' },
+  { id: 'vivar', name: 'Vivarium', shortName: 'Vivarium', constructionMult: 2.9, operatingMult: 8.0, group: 'wet' },
+];
+
+const fairDefaultMult = {
+  comp: 1.0, dry: 1.0, optL: 1.0, optH: 1.0,
+  bio: 1.5, chem: 1.5, clean: 1.5, vivar: 1.5,
+  clin: 1.2,
+};
+
+const formatCurrency = (n) => '$' + Math.round(n).toLocaleString();
+const formatCurrencyK = (n) => '$' + Math.round(n/1000) + 'K';
+
+function FAIRTool() {
+  const [institutionParams, setInstitutionParams] = useState({
+    fnaRate: 60,
+    baselineOpCost: 35,
+    erpsOtherPct: 8,
+    groPct: 10,
+    fairSimpleRate: 25,
+  });
+
+  const [typologies, setTypologies] = useState(defaultTypologies);
+
+  const [project, setProject] = useState({
+    directCost: 500000,
+    nsf: 800,
+    duration: 1,
+    typologyId: 'chem',
+  });
+
+  const calculations = useMemo(() => {
+    const direct = project.directCost;
+    const nsf = project.nsf;
+    const duration = project.duration;
+    const baselineOp = institutionParams.baselineOpCost;
+    const fnaRate = institutionParams.fnaRate / 100;
+    const erpsOther = institutionParams.erpsOtherPct / 100;
+    const gro = institutionParams.groPct / 100;
+    const fairSimple = institutionParams.fairSimpleRate / 100;
+
+    const scenarioA = {
+      direct,
+      facility: direct * fnaRate * 0.55,
+      otherIndirect: direct * fnaRate * 0.45,
+      gro: 0,
+      total: direct + (direct * fnaRate),
+    };
+
+    const scenarioBTotal = direct / (1 - fairSimple);
+    const scenarioB = {
+      direct,
+      facility: scenarioBTotal * 0.10 * 0.6,
+      otherIndirect: scenarioBTotal * 0.10 * 0.4,
+      gro: scenarioBTotal * 0.15,
+      total: scenarioBTotal,
+    };
+
+    const calcDetailed = (multiplier) => {
+      const erpfCost = nsf * baselineOp * multiplier * duration;
+      const erpsOtherCost = direct * erpsOther;
+      const subtotal = direct + erpfCost + erpsOtherCost;
+      const total = subtotal / (1 - gro);
+      const groCost = total - subtotal;
+      return { direct, facility: erpfCost, otherIndirect: erpsOtherCost, gro: groCost, total };
+    };
+
+    const byTypology = typologies.map(t => {
+      const fairDefault = fairDefaultMult[t.id] || 1.0;
+      return {
+        ...t,
+        opCostPerSF: baselineOp * t.operatingMult,
+        scenarioA: scenarioA,
+        scenarioB: scenarioB,
+        scenarioC: calcDetailed(fairDefault),
+        scenarioD: calcDetailed(t.operatingMult),
+        recoveryFloor: baselineOp * t.operatingMult * 3,
+      };
+    });
+
+    const selectedTypology = byTypology.find(t => t.id === project.typologyId) || byTypology[0];
+
+    return { scenarioA, scenarioB, byTypology, selectedTypology };
+  }, [institutionParams, typologies, project]);
+
+  const updateTypology = (id, field, value) => {
+    setTypologies(prev => prev.map(t => t.id === id ? { ...t, [field]: parseFloat(value) || 0 } : t));
+  };
+
+  const projectChartData = [
+    {
+      name: 'Current F&A',
+      'Direct (RPC)': calculations.selectedTypology.scenarioA.direct,
+      'Facility (ERPF)': calculations.selectedTypology.scenarioA.facility,
+      'Other Indirect': calculations.selectedTypology.scenarioA.otherIndirect,
+      'GRO': calculations.selectedTypology.scenarioA.gro,
+      Total: calculations.selectedTypology.scenarioA.total,
+    },
+    {
+      name: 'FAIR Simple',
+      'Direct (RPC)': calculations.selectedTypology.scenarioB.direct,
+      'Facility (ERPF)': calculations.selectedTypology.scenarioB.facility,
+      'Other Indirect': calculations.selectedTypology.scenarioB.otherIndirect,
+      'GRO': calculations.selectedTypology.scenarioB.gro,
+      Total: calculations.selectedTypology.scenarioB.total,
+    },
+    {
+      name: 'FAIR Default',
+      'Direct (RPC)': calculations.selectedTypology.scenarioC.direct,
+      'Facility (ERPF)': calculations.selectedTypology.scenarioC.facility,
+      'Other Indirect': calculations.selectedTypology.scenarioC.otherIndirect,
+      'GRO': calculations.selectedTypology.scenarioC.gro,
+      Total: calculations.selectedTypology.scenarioC.total,
+    },
+    {
+      name: 'FAIR Granular',
+      'Direct (RPC)': calculations.selectedTypology.scenarioD.direct,
+      'Facility (ERPF)': calculations.selectedTypology.scenarioD.facility,
+      'Other Indirect': calculations.selectedTypology.scenarioD.otherIndirect,
+      'GRO': calculations.selectedTypology.scenarioD.gro,
+      Total: calculations.selectedTypology.scenarioD.total,
+    },
+  ];
+
+  const allTypologiesData = calculations.byTypology.map(t => ({
+    name: t.shortName,
+    'Current F&A': calculations.scenarioA.total,
+    'FAIR Granular': t.scenarioD.total,
+    delta: t.scenarioD.total - calculations.scenarioA.total,
+  }));
+
+  const COLORS = {
+    direct: '#2d3e50',
+    facility: '#a85432',
+    otherIndirect: '#8a7651',
+    gro: '#c4b896',
+    accent: '#a85432',
+    accentLight: '#d4a892',
+    positive: '#3d6b54',
+    negative: '#8a3a2a',
+  };
+
+  return (
+    <div className="min-h-screen p-4 md:p-8" style={{ backgroundColor: '#faf7f2', color: '#1a1a1a' }}>
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="mb-8 pb-6" style={{ borderBottom: '2px solid #1a1a1a' }}>
+          <div className="flex items-baseline justify-between flex-wrap gap-2">
+            <h1 className="font-display text-4xl md:text-5xl font-medium" style={{ color: '#1a1a1a', letterSpacing: '-0.02em' }}>
+              FAIRground
+            </h1>
+            <div className="text-xs uppercase tracking-widest" style={{ color: '#8a7651' }}>
+              FAIR Cost Recovery Comparator · Lab Typology Analysis · v1.1
+            </div>
+          </div>
+          <p className="font-display italic text-lg mt-2" style={{ color: '#5a5347' }}>
+            How would your research portfolio recover facility costs under different federal models?
+          </p>
+        </div>
+
+        {/* Institution Setup */}
+        <section className="mb-10">
+          <h2 className="font-display text-2xl mb-4 font-medium">1 · Institution Parameters</h2>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-6 mb-2">
+            <div>
+              <label className="block text-xs uppercase tracking-wider mb-1" style={{ color: '#5a5347' }}>Current F&A Rate</label>
+              <div className="flex items-baseline gap-1">
+                <input type="number" className="input-line" value={institutionParams.fnaRate}
+                  onChange={(e) => setInstitutionParams({...institutionParams, fnaRate: parseFloat(e.target.value) || 0})} step="1" />
+                <span className="text-sm" style={{ color: '#5a5347' }}>%</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs uppercase tracking-wider mb-1" style={{ color: '#5a5347' }}>Baseline Op Cost</label>
+              <div className="flex items-baseline gap-1">
+                <span className="text-sm" style={{ color: '#5a5347' }}>$</span>
+                <input type="number" className="input-line" value={institutionParams.baselineOpCost}
+                  onChange={(e) => setInstitutionParams({...institutionParams, baselineOpCost: parseFloat(e.target.value) || 0})} />
+                <span className="text-sm" style={{ color: '#5a5347' }}>/SF/yr</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs uppercase tracking-wider mb-1" style={{ color: '#5a5347' }}>Other ERPS</label>
+              <div className="flex items-baseline gap-1">
+                <input type="number" className="input-line" value={institutionParams.erpsOtherPct}
+                  onChange={(e) => setInstitutionParams({...institutionParams, erpsOtherPct: parseFloat(e.target.value) || 0})} step="0.5" />
+                <span className="text-sm" style={{ color: '#5a5347' }}>% of direct</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs uppercase tracking-wider mb-1" style={{ color: '#5a5347' }}>GRO Rate</label>
+              <div className="flex items-baseline gap-1">
+                <input type="number" className="input-line" value={institutionParams.groPct}
+                  onChange={(e) => setInstitutionParams({...institutionParams, groPct: parseFloat(e.target.value) || 0})} step="0.5" />
+                <span className="text-sm" style={{ color: '#5a5347' }}>% of total</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs uppercase tracking-wider mb-1" style={{ color: '#5a5347' }}>FAIR Simple Rate</label>
+              <div className="flex items-baseline gap-1">
+                <input type="number" className="input-line" value={institutionParams.fairSimpleRate}
+                  onChange={(e) => setInstitutionParams({...institutionParams, fairSimpleRate: parseFloat(e.target.value) || 0})} step="0.5" />
+                <span className="text-sm" style={{ color: '#5a5347' }}>% of total</span>
+              </div>
+            </div>
+          </div>
+          <p className="text-xs italic mt-3" style={{ color: '#8a7651' }}>
+            Defaults: 60% F&A rate (typical R1), $35/SF baseline operating cost (computational/office), 8% Other ERPS (RC + AMOR + RIDS), 10% GRO, 25% FAIR Simple combined rate.
+          </p>
+        </section>
+
+        {/* Typology Multipliers */}
+        <section className="mb-10">
+          <h2 className="font-display text-2xl mb-4 font-medium">2 · Lab Typology Multipliers</h2>
+          <p className="text-sm mb-4 max-w-4xl" style={{ color: '#5a5347' }}>
+            Multipliers reference computational/office space at 1.0×. Operating multiplier drives ERPF cost recovery under FAIR Detailed. Construction multiplier is shown for context (it affects depreciation, which is part of operating cost).
+            <span className="italic"> Adjust any cell to test alternative assumptions.</span>
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr style={{ borderBottom: '1px solid #1a1a1a' }}>
+                  <th className="text-left py-2 px-2 font-medium text-xs uppercase tracking-wider" style={{ color: '#5a5347' }}>Typology</th>
+                  <th className="text-right py-2 px-2 font-medium text-xs uppercase tracking-wider" style={{ color: '#5a5347' }}>Constr Mult</th>
+                  <th className="text-right py-2 px-2 font-medium text-xs uppercase tracking-wider" style={{ color: '#5a5432' }}>Operating Mult</th>
+                  <th className="text-right py-2 px-2 font-medium text-xs uppercase tracking-wider" style={{ color: '#5a5347' }}>Op Cost / SF</th>
+                  <th className="text-right py-2 px-2 font-medium text-xs uppercase tracking-wider" style={{ color: '#5a5347' }}>3-Yr Recovery Floor</th>
+                  <th className="text-right py-2 px-2 font-medium text-xs uppercase tracking-wider" style={{ color: '#5a5347' }}>FAIR Default</th>
+                </tr>
+              </thead>
+              <tbody>
+                {calculations.byTypology.map((t) => (
+                  <tr key={t.id} style={{ borderBottom: '1px solid #e8e0d1', backgroundColor: t.id === project.typologyId ? '#f5ede0' : 'transparent' }}>
+                    <td className="py-3 px-2 font-medium">{t.name}</td>
+                    <td className="text-right px-2 font-mono" style={{ color: '#5a5347' }}>
+                      <input type="number" step="0.1" className="input-line text-right" style={{ width: '60px' }}
+                        value={t.constructionMult} onChange={(e) => updateTypology(t.id, 'constructionMult', e.target.value)} />
+                      <span style={{ color: '#5a5347' }}>×</span>
+                    </td>
+                    <td className="text-right px-2 font-mono" style={{ color: '#a85432', fontWeight: 600 }}>
+                      <input type="number" step="0.1" className="input-line text-right" style={{ width: '60px', color: '#a85432', fontWeight: 600 }}
+                        value={t.operatingMult} onChange={(e) => updateTypology(t.id, 'operatingMult', e.target.value)} />
+                      <span style={{ color: '#a85432' }}>×</span>
+                    </td>
+                    <td className="text-right px-2 font-mono">${(institutionParams.baselineOpCost * t.operatingMult).toFixed(0)}</td>
+                    <td className="text-right px-2 font-mono">${(institutionParams.baselineOpCost * t.operatingMult * 3).toFixed(0)}</td>
+                    <td className="text-right px-2 font-mono" style={{ color: '#8a7651' }}>{fairDefaultMult[t.id]?.toFixed(1)}×</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        {/* Project Calculator */}
+        <section className="mb-10">
+          <h2 className="font-display text-2xl mb-4 font-medium">3 · Project Calculator</h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
+            <div>
+              <label className="block text-xs uppercase tracking-wider mb-1" style={{ color: '#5a5347' }}>Direct Cost (RPC)</label>
+              <div className="flex items-baseline gap-1">
+                <span className="text-sm" style={{ color: '#5a5347' }}>$</span>
+                <input type="number" className="input-line" value={project.directCost}
+                  onChange={(e) => setProject({...project, directCost: parseFloat(e.target.value) || 0})} step="10000" />
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs uppercase tracking-wider mb-1" style={{ color: '#5a5347' }}>Lab Footprint</label>
+              <div className="flex items-baseline gap-1">
+                <input type="number" className="input-line" value={project.nsf}
+                  onChange={(e) => setProject({...project, nsf: parseFloat(e.target.value) || 0})} step="50" />
+                <span className="text-sm" style={{ color: '#5a5347' }}>NSF</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs uppercase tracking-wider mb-1" style={{ color: '#5a5347' }}>Duration</label>
+              <div className="flex items-baseline gap-1">
+                <input type="number" className="input-line" value={project.duration}
+                  onChange={(e) => setProject({...project, duration: parseFloat(e.target.value) || 0})} step="0.5" />
+                <span className="text-sm" style={{ color: '#5a5347' }}>years</span>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs uppercase tracking-wider mb-1" style={{ color: '#5a5347' }}>Lab Typology</label>
+              <select className="w-full bg-transparent border-b py-1" style={{ borderColor: '#d4ccbf', outline: 'none' }}
+                value={project.typologyId} onChange={(e) => setProject({...project, typologyId: e.target.value})}>
+                {typologies.map(t => (<option key={t.id} value={t.id}>{t.name}</option>))}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
+            <ScenarioCard label="Current F&A" sublabel="Single negotiated rate"
+              data={calculations.selectedTypology.scenarioA} baseline={calculations.selectedTypology.scenarioA.total} />
+            <ScenarioCard label="FAIR Simple" sublabel="Flat 25% of total"
+              data={calculations.selectedTypology.scenarioB} baseline={calculations.selectedTypology.scenarioA.total} />
+            <ScenarioCard label="FAIR Default" sublabel="Published ratios (1.0/1.2/1.5)"
+              data={calculations.selectedTypology.scenarioC} baseline={calculations.selectedTypology.scenarioA.total} />
+            <ScenarioCard label="FAIR Granular" sublabel={`${calculations.selectedTypology.shortName} actual cost`}
+              data={calculations.selectedTypology.scenarioD} baseline={calculations.selectedTypology.scenarioA.total} highlight />
+          </div>
+
+          <div className="mb-6" style={{ backgroundColor: '#fefcf8', border: '1px solid #e8e0d1', padding: '20px' }}>
+            <h3 className="font-display text-lg mb-1 font-medium">Project budget composition</h3>
+            <p className="text-xs mb-4" style={{ color: '#5a5347' }}>
+              {calculations.selectedTypology.name} · {formatCurrency(project.directCost)} direct cost · {project.nsf} NSF · {project.duration} year{project.duration !== 1 ? 's' : ''}
+            </p>
+            <ResponsiveContainer width="100%" height={320}>
+              <BarChart data={projectChartData} margin={{ top: 20, right: 30, left: 10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e8e0d1" vertical={false} />
+                <XAxis dataKey="name" tick={{ fill: '#5a5347', fontFamily: 'Public Sans', fontSize: 13 }} />
+                <YAxis tickFormatter={(v) => formatCurrencyK(v)} tick={{ fill: '#5a5347', fontFamily: 'JetBrains Mono', fontSize: 12 }} />
+                <Tooltip formatter={(value) => formatCurrency(value)}
+                  contentStyle={{ backgroundColor: '#fefcf8', border: '1px solid #1a1a1a', fontFamily: 'JetBrains Mono', fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontFamily: 'Public Sans', fontSize: 13 }} />
+                <Bar dataKey="Direct (RPC)" stackId="a" fill={COLORS.direct} />
+                <Bar dataKey="Facility (ERPF)" stackId="a" fill={COLORS.facility} />
+                <Bar dataKey="Other Indirect" stackId="a" fill={COLORS.otherIndirect} />
+                <Bar dataKey="GRO" stackId="a" fill={COLORS.gro} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+
+        {/* Cross-Typology Comparison */}
+        <section className="mb-10">
+          <h2 className="font-display text-2xl mb-4 font-medium">4 · Cross-Typology Comparison</h2>
+          <p className="text-sm mb-4 max-w-4xl" style={{ color: '#5a5347' }}>
+            For your selected project parameters ({formatCurrency(project.directCost)} direct cost, {project.nsf} NSF), here's how the total project budget shifts across lab typologies under FAIR Granular. The dashed line is what current F&A produces — uniform across all typologies.
+          </p>
+          <div style={{ backgroundColor: '#fefcf8', border: '1px solid #e8e0d1', padding: '20px' }}>
+            <ResponsiveContainer width="100%" height={380}>
+              <BarChart data={allTypologiesData} margin={{ top: 20, right: 30, left: 10, bottom: 60 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e8e0d1" vertical={false} />
+                <XAxis dataKey="name" tick={{ fill: '#5a5347', fontFamily: 'Public Sans', fontSize: 11 }} angle={-30} textAnchor="end" height={70} />
+                <YAxis tickFormatter={(v) => formatCurrencyK(v)} tick={{ fill: '#5a5347', fontFamily: 'JetBrains Mono', fontSize: 12 }} />
+                <Tooltip formatter={(value, name) => [formatCurrency(value), name]}
+                  contentStyle={{ backgroundColor: '#fefcf8', border: '1px solid #1a1a1a', fontFamily: 'JetBrains Mono', fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontFamily: 'Public Sans', fontSize: 13 }} />
+                <Bar dataKey="FAIR Granular" name="FAIR Granular Total">
+                  {allTypologiesData.map((entry, idx) => (
+                    <Cell key={idx} fill={entry.delta >= 0 ? COLORS.positive : COLORS.negative} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6 pt-6" style={{ borderTop: '1px solid #e8e0d1' }}>
+              <div>
+                <div className="text-xs uppercase tracking-wider mb-1" style={{ color: '#5a5347' }}>Current F&A baseline</div>
+                <div className="font-mono text-2xl" style={{ color: '#1a1a1a' }}>{formatCurrency(calculations.scenarioA.total)}</div>
+                <div className="text-xs mt-1" style={{ color: '#8a7651' }}>same for all typologies</div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wider mb-1" style={{ color: COLORS.positive }}>Winners under FAIR Granular</div>
+                <div className="font-mono text-sm">
+                  {allTypologiesData.filter(d => d.delta > 0).map(d => (
+                    <div key={d.name}>{d.name}: <span style={{ color: COLORS.positive, fontWeight: 600 }}>+{formatCurrencyK(d.delta)}</span></div>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wider mb-1" style={{ color: COLORS.negative }}>Losers under FAIR Granular</div>
+                <div className="font-mono text-sm">
+                  {allTypologiesData.filter(d => d.delta <= 0).map(d => (
+                    <div key={d.name}>{d.name}: <span style={{ color: COLORS.negative, fontWeight: 600 }}>{formatCurrencyK(d.delta)}</span></div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Notes */}
+        <section className="mb-6 pt-6" style={{ borderTop: '1px solid #1a1a1a' }}>
+          <h3 className="font-display text-lg mb-3 font-medium">Reading the tool</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm" style={{ color: '#5a5347' }}>
+            <div>
+              <p className="mb-3"><span className="font-medium" style={{ color: '#1a1a1a' }}>The four scenarios.</span> Current F&A applies a single negotiated indirect rate to direct costs (typically MTDC). FAIR Simple uses a flat 25% combined rate. FAIR Default uses the JAG-published multipliers (1.0/1.2/1.5 for dry/clinical/wet) to calculate ERPF directly per project. FAIR Granular uses the typology-specific multipliers in the table above.</p>
+              <p><span className="font-medium" style={{ color: '#1a1a1a' }}>Why the four scenarios diverge.</span> Current F&A averages facility costs across all space at the institution. FAIR Simple under-recovers for research-intensive institutions. FAIR Default starts to differentiate by space type but only at three levels. FAIR Granular ties recovery to actual cost.</p>
+            </div>
+            <div>
+              <p className="mb-3"><span className="font-medium" style={{ color: '#1a1a1a' }}>What "recovery floor" means.</span> The 3-year cost recovery floor in the typology table is the minimum total project cost per SF needed to cover ERPF over a typical project duration. A chemistry lab at $165/SF/year of facility cost needs to generate $495/SF in total project budget over 3 years just to break even on facility cost.</p>
+              <p><span className="font-medium" style={{ color: '#1a1a1a' }}>What this tool doesn't model.</span> Federal salary caps, budget caps, multiyear forward-funding effects, sub-award handling, recharge center recoveries, and institution-specific cost pool composition. These all matter for a real implementation — this tool is for exploring the structural shift between models.</p>
+            </div>
+          </div>
+        </section>
+
+        <footer className="mt-12 pt-4 text-xs" style={{ color: '#8a7651', borderTop: '1px solid #e8e0d1' }}>
+          <div className="flex justify-between items-baseline flex-wrap gap-2">
+            <span>FAIRground · Prototype for SCUP National Conference 2026 · Topic 1: Research Policy Landscape</span>
+            <span className="font-mono">v1.1</span>
+          </div>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+function ScenarioCard({ label, sublabel, data, baseline, highlight }) {
+  const delta = data.total - baseline;
+  const isPositive = delta > 0;
+
+  return (
+    <div className={`scenario-card ${highlight ? 'highlight' : ''}`}>
+      <div className="text-xs uppercase tracking-wider font-medium mb-1" style={{ color: highlight ? '#a85432' : '#5a5347' }}>{label}</div>
+      <div className="text-xs mb-3" style={{ color: '#8a7651' }}>{sublabel}</div>
+      <div className="font-mono text-xl mb-3" style={{ color: '#1a1a1a' }}>${Math.round(data.total).toLocaleString()}</div>
+      <div className="text-xs space-y-1" style={{ color: '#5a5347' }}>
+        <div className="flex justify-between"><span>Direct</span><span className="font-mono">${Math.round(data.direct/1000)}K</span></div>
+        <div className="flex justify-between"><span>Facility</span><span className="font-mono">${Math.round(data.facility/1000)}K</span></div>
+        <div className="flex justify-between"><span>Other Indirect</span><span className="font-mono">${Math.round(data.otherIndirect/1000)}K</span></div>
+        {data.gro > 0 && (
+          <div className="flex justify-between"><span>GRO</span><span className="font-mono">${Math.round(data.gro/1000)}K</span></div>
+        )}
+      </div>
+      {baseline !== data.total && (
+        <div className="mt-3 pt-3 text-xs font-mono" style={{ borderTop: '1px solid #e8e0d1', color: isPositive ? '#3d6b54' : '#8a3a2a' }}>
+          {isPositive ? '+' : ''}{Math.round(delta/1000)}K vs F&A
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<FAIRTool />);
+</script>
+</body>
+</html>
